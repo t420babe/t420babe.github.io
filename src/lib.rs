@@ -1,51 +1,115 @@
-use wasm_bindgen::prelude::*;
+mod log;
+use log::log;
+
+use wasm_bindgen::{prelude::*, JsCast};
+use web_sys::{WebGlProgram, WebGlRenderingContext, WebGlShader};
 
 #[wasm_bindgen(start)]
-pub fn run() {
-  bare_bones();
-  using_a_macro();
-  using_web_sys();
+pub fn start() -> Result<(), JsValue> {
+  let document = web_sys::window().unwrap().document().unwrap();
+  let canvas = document.get_element_by_id("canvas").unwrap();
+  let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
+
+  let context = canvas.get_context("webgl")?.unwrap().dyn_into::<WebGlRenderingContext>()?;
+
+  let vert_shader = compile_shader(
+    &context,
+    WebGlRenderingContext::VERTEX_SHADER,
+    r#"
+    attribute vec4 position;
+    void main() {
+      gl_Position = position;
+    }
+    "#,
+  )?;
+
+  let frag_shader = compile_shader(
+    &context,
+    WebGlRenderingContext::FRAGMENT_SHADER,
+    r#"
+    void main() {
+      gl_FragColor = vec4(1.0);
+    }
+    "#,
+  )?;
+
+  let program = link_program(&context, &vert_shader, &frag_shader)?;
+  context.use_program(Some(&program));
+
+  let vertices: [f32; 9] = [-0.7, -0.7, 0.0, 0.7, -0.7, 0.0, 0.0, 0.7, 0.0];
+
+  let buffer = context.create_buffer().ok_or("failed to create buffer")?;
+  context.bind_buffer(WebGlRenderingContext::ARRAY_BUFFER, Some(&buffer));
+
+  unsafe {
+    let vert_array = js_sys::Float32Array::view(&vertices);
+    context.buffer_data_with_array_buffer_view(
+      WebGlRenderingContext::ARRAY_BUFFER,
+      &vert_array,
+      WebGlRenderingContext::STATIC_DRAW,
+    );
+  }
+
+  context.vertex_attrib_pointer_with_i32(0, 3, WebGlRenderingContext::FLOAT, false, 0, 0);
+  context.enable_vertex_attrib_array(0);
+
+  context.clear_color(0.0, 0.0, 0.0, 1.0);
+  context.clear(WebGlRenderingContext::COLOR_BUFFER_BIT);
+
+  context.draw_arrays(WebGlRenderingContext::TRIANGLES, 0, (vertices.len() / 3) as i32);
+
+  Ok(())
 }
 
-#[wasm_bindgen]
-extern "C" {
-  // Use `js_namespace` to bind `console.log(..)` instead of just `log(..)`
-  #[wasm_bindgen(js_namespace = console)]
-  fn log(s: &str);
+pub fn compile_shader(
+  context: &WebGlRenderingContext,
+  shader_type: u32,
+  source: &str,
+) -> Result<WebGlShader, String> {
+  let shader = context
+    .create_shader(shader_type)
+    .ok_or_else(|| String::from("Unable to create shader object"))?;
+  context.shader_source(&shader, source);
+  context.compile_shader(&shader);
 
-  // The `console.log` is quite polymorphic, so it can be bound with multiple signatures. Note that we need to use
-  // `js_name` to ensure we always call `log`
-  #[wasm_bindgen(js_namespace = console, js_name = log)]
-  fn log_u32(a: u32);
-
-  // Log multiple arguments
-  #[wasm_bindgen(js_namespace = console, js_name = log)]
-  fn log_many(a: &str, b: &str);
+  if context
+    .get_shader_parameter(&shader, WebGlRenderingContext::COMPILE_STATUS)
+    .as_bool()
+    .unwrap_or(false)
+  {
+    Ok(shader)
+  } else {
+    Err(
+      context
+        .get_shader_info_log(&shader)
+        .unwrap_or_else(|| String::from("Unknown error creating shader")),
+    )
+  }
 }
 
-fn bare_bones() {
-  log("Hi from Rust");
-  log_u32(4);
-  log_many("Logging", "many values");
-}
+pub fn link_program(
+  context: &WebGlRenderingContext,
+  vert_shader: &WebGlShader,
+  frag_shader: &WebGlShader,
+) -> Result<WebGlProgram, String> {
+  let program =
+    context.create_program().ok_or_else(|| String::from("Unable to create shader object"))?;
 
-// Define macro to get `println!` functionality for `console.log`
-macro_rules! console_log {
-  // Using `log` function imported in `bare_bones` function
-  ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
+  context.attach_shader(&program, vert_shader);
+  context.attach_shader(&program, frag_shader);
+  context.link_program(&program);
 
-fn using_a_macro() {
-  console_log!("Hello {}!", "t420babe");
-  console_log!("Let's print some numbers");
-  console_log!("2 + 2 = {}", 2 + 2);
-}
-
-fn using_web_sys() {
-  use web_sys::console;
-
-  console::log_1(&"Hello using web-sys".into());
-
-  let js: JsValue = 4.into();
-  console::log_2(&"Logging arbitrary values looks like".into(), &js);
+  if context
+    .get_program_parameter(&program, WebGlRenderingContext::LINK_STATUS)
+    .as_bool()
+    .unwrap_or(false)
+  {
+    Ok(program)
+  } else {
+    Err(
+      context
+        .get_program_info_log(&program)
+        .unwrap_or_else(|| String::from("Unknown error creating program object")),
+    )
+  }
 }
