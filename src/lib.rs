@@ -6,57 +6,40 @@ use web_sys::{WebGlProgram, WebGlRenderingContext, WebGlShader};
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-  let document = web_sys::window().unwrap().document().unwrap();
-  let canvas = document.get_element_by_id("canvas").unwrap();
-  let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
+  web_sys::console::log_1(&"Hi".into());
+  log("yes created");
+  let context = get_rendering_context()?;
 
-  let context = canvas.get_context("webgl")?.unwrap().dyn_into::<WebGlRenderingContext>()?;
-
-  let vert_shader = compile_shader(
-    &context,
-    WebGlRenderingContext::VERTEX_SHADER,
-    r#"
-    attribute vec4 position;
+  let vertex_shader_source = r#"
     void main() {
-      gl_Position = position;
+      gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_PointSize = 64.0;
     }
-    "#,
-  )?;
+  "#;
 
-  let frag_shader = compile_shader(
-    &context,
-    WebGlRenderingContext::FRAGMENT_SHADER,
-    r#"
-    void main() {
-      gl_FragColor = vec4(1.0);
+  let fragment_shader_source = r#"
+    void main(void) {
+      gl_FragColor = vec4(0.5, 0.1, 0.8, 1.0);
     }
-    "#,
-  )?;
+  "#;
+  let vertex_shader =
+    compile_shader(&context, WebGlRenderingContext::VERTEX_SHADER, &vertex_shader_source)?;
+  let fragment_shader =
+    compile_shader(&context, WebGlRenderingContext::FRAGMENT_SHADER, &fragment_shader_source)?;
 
-  let program = link_program(&context, &vert_shader, &frag_shader)?;
-  context.use_program(Some(&program));
+  let program =
+    context.create_program().ok_or_else(|| String::from("Unable to create shader object"))?;
+  context.attach_shader(&program, &vertex_shader);
+  context.attach_shader(&program, &fragment_shader);
+  context.link_program(&program);
 
-  let vertices: [f32; 9] = [-0.7, -0.7, 0.0, 0.7, -0.7, 0.0, 0.0, 0.7, 0.0];
-
-  let buffer = context.create_buffer().ok_or("failed to create buffer")?;
-  context.bind_buffer(WebGlRenderingContext::ARRAY_BUFFER, Some(&buffer));
-
-  unsafe {
-    let vert_array = js_sys::Float32Array::view(&vertices);
-    context.buffer_data_with_array_buffer_view(
-      WebGlRenderingContext::ARRAY_BUFFER,
-      &vert_array,
-      WebGlRenderingContext::STATIC_DRAW,
-    );
-  }
-
-  context.vertex_attrib_pointer_with_i32(0, 3, WebGlRenderingContext::FLOAT, false, 0, 0);
   context.enable_vertex_attrib_array(0);
-
-  context.clear_color(0.0, 0.0, 0.0, 1.0);
-  context.clear(WebGlRenderingContext::COLOR_BUFFER_BIT);
-
-  context.draw_arrays(WebGlRenderingContext::TRIANGLES, 0, (vertices.len() / 3) as i32);
+  let buffer = context.create_buffer().ok_or("Failed to create buffer")?;
+  context.bind_buffer(WebGlRenderingContext::ARRAY_BUFFER, Some(&buffer));
+  context.vertex_attrib_pointer_with_i32(0, 1, WebGlRenderingContext::FLOAT, false, 0, 0);
+  context.enable_vertex_attrib_array(0);
+  context.use_program(Some(&program));
+  context.draw_arrays(WebGlRenderingContext::POINTS, 0, 1);
 
   Ok(())
 }
@@ -112,4 +95,21 @@ pub fn link_program(
         .unwrap_or_else(|| String::from("Unknown error creating program object")),
     )
   }
+}
+
+fn get_rendering_context() -> Result<WebGlRenderingContext, JsValue> {
+  let document = web_sys::window().unwrap().document().unwrap();
+  let canvas = document.get_element_by_id("canvas").unwrap();
+  let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
+  canvas.set_width(canvas.client_width() as u32);
+  canvas.set_height(canvas.client_height() as u32);
+
+  let context =
+    canvas.get_context("experimental-webgl")?.unwrap().dyn_into::<WebGlRenderingContext>()?;
+  context.viewport(0, 0, context.drawing_buffer_width(), context.drawing_buffer_height());
+  context.enable(WebGlRenderingContext::DEPTH_TEST);
+  context.clear_color(1.0, 1.0, 0.0, 1.0);
+  context.clear(WebGlRenderingContext::COLOR_BUFFER_BIT);
+
+  Ok(context)
 }
